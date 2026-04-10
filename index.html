@@ -1289,7 +1289,8 @@ function renderCal(){
   for(let i=0;i<first;i++)h+='<div class="cal-day empty"></div>';
   for(let d=1;d<=dim;d++){
     const ds=`${ym}-${pad(d)}`;
-    const dow=new Date(ds).getDay(),lv=eId?leaves.find(l=>l.empId===eId&&l.date===ds):null;
+    // 用 slice(0,10) 比對，相容 Sheets 回傳的 ISO 格式
+    const dow=new Date(ds).getDay(),lv=eId?leaves.find(l=>l.empId===eId&&String(l.date).slice(0,10)===ds):null;
     const isSel=selDates.has(ds);
     let style='',cls='cal-day';
     if(!eId)cls+=' no-emp';
@@ -1337,11 +1338,11 @@ function renderStaffCal(){
     h+=`<div class="sgc nm">${emp.name}</div>`;
     for(let d=1;d<=dim;d++){
       const ds=`${y}-${m}-${pad(d)}`,dow=new Date(ds).getDay();
-      const lv=leaves.find(l=>l.empId===emp.id&&l.date===ds);
+      const lv=leaves.find(l=>l.empId===emp.id&&String(l.date).slice(0,10)===ds);
       if(lv){h+=`<div class="sgc" style="background:${LV_BG[lv.type]};color:${LV_FG[lv.type]};font-weight:600;font-size:10px;">${lv.type.slice(0,1)}</div>`;}
       else if(ds>today())h+=`<div class="sgc"></div>`;
       else{
-        const dr=records.filter(r=>r.empId===emp.id&&r.date===ds);
+        const dr=records.filter(r=>r.empId===emp.id&&String(r.date).slice(0,10)===ds);
         const pI=dr.some(r=>r.type==='上班'),pO=dr.some(r=>r.type==='下班');
         if(pI&&pO)h+=`<div class="sgc" style="background:rgba(34,201,134,.12);color:var(--green);font-size:10px;">✓</div>`;
         else if(pI||pO)h+=`<div class="sgc" style="background:rgba(245,200,66,.1);color:var(--yellow);font-size:10px;">△</div>`;
@@ -1676,21 +1677,21 @@ function cloudPull(manual = false) {
           return s;
         }
 
-        // 時間：Sheets 可能把 "08:30:00" 存成日期物件或 "1899-12-31T00:30:00.000Z"
-        // 1899-12-31 是 Excel 時間序列的起點，取時間部分即可
+        // 時間：Sheets 把 HH:MM:SS 存成 "1899-12-31T00:30:00.000Z"（UTC時間）
+        // 台灣是 UTC+8，需要用本地時間而非 UTC 時間
         function fixTime(v) {
           if (!v) return '';
           var s = String(v);
-          // "1899-12-31T08:30:00.000Z" → 擷取時間部分並加8小時時區補正
-          if (s.indexOf('1899-12-31T') === 0 || s.indexOf('T') > 0) {
-            // 取 T 後面的 HH:MM:SS
-            var tPart = s.split('T')[1] || '';
-            var hms = tPart.slice(0, 8); // "08:30:00"
-            // 如果已是 HH:MM:SS 格式直接回傳
-            if (/^\d{2}:\d{2}:\d{2}$/.test(hms)) return hms;
+          var p2 = function(n){ return String(n).padStart(2,'0'); };
+          // 已是 HH:MM 或 HH:MM:SS 格式，直接回傳
+          if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.length === 5 ? s + ':00' : s;
+          // ISO 格式（含 T）→ 用 Date 物件轉成本地時間字串，避免時區問題
+          if (s.indexOf('T') > 0) {
+            var dt = new Date(s);
+            if (!isNaN(dt.getTime())) {
+              return p2(dt.getHours()) + ':' + p2(dt.getMinutes()) + ':' + p2(dt.getSeconds());
+            }
           }
-          // 已是 HH:MM:SS 格式
-          if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0, 8).padEnd(8, ':00');
           return s;
         }
 
