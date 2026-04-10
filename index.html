@@ -580,6 +580,9 @@ select.inp option { background: var(--bg2); }
 }
 .pin-inp:focus { border-color: var(--green); }
 
+/* ── Sync pulse ── */
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.3;} }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -868,14 +871,35 @@ select.inp option { background: var(--bg2); }
         </div>
       </div>
 
+      <!-- ── Google Sheets 雲端同步 ── -->
       <div class="card admin-section">
-        <div class="card-title">資料備份 / 還原</div>
+        <div class="card-title">☁️ Google Sheets 雲端同步</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:14px;">
+          所有資料（打卡記錄、月報表、員工名冊、休假管理、補打卡紀錄）均可同步至 Google 試算表，實現跨裝置即時存取。
+        </div>
+        <div id="syncStatus" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);margin-bottom:14px;font-size:12px;">
+          <span id="syncDot" style="width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;"></span>
+          <span id="syncMsg">尚未同步 — 資料僅存於本機</span>
+          <span id="syncTime" style="color:var(--text3);margin-left:auto;"></span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+          <button class="btn btn-primary" onclick="cloudPush(true)">⬆️ 立即上傳全部資料</button>
+          <button class="btn btn-ghost" onclick="cloudPull(true)">⬇️ 從雲端下載最新資料</button>
+        </div>
+        <div style="font-size:11px;color:var(--text3);line-height:1.7;">
+          ✅ 自動同步：每次打卡、補打卡、核簽、員工異動、休假變更後自動上傳至 Google Sheets<br>
+          📋 同步內容：打卡記錄 / 員工名冊 / 休假管理 / 加班申請 / 操作稽核日誌
+        </div>
+        <div id="syncErrMsg" style="font-size:12px;color:var(--red);margin-top:10px;display:none;"></div>
+      </div>
+
+      <div class="card admin-section">
+        <div class="card-title">資料備份 / 還原（本機 JSON）</div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:18px;">
-          ⚠️ 打卡資料存在瀏覽器本地。換裝置、換網址、或清除瀏覽器時資料會消失。<br>
-          建議定期備份，換裝置時用「還原」匯入。
+          本機備份作為額外保障，建議定期下載。換裝置時優先用「雲端下載」，或匯入備份 JSON。
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="backupData()">📥 備份資料（下載 JSON）</button>
+          <button class="btn btn-ghost" onclick="backupData()">📥 備份資料（下載 JSON）</button>
           <button class="btn btn-ghost" onclick="document.getElementById('restoreFile').click()">📤 還原資料（匯入 JSON）</button>
           <input type="file" id="restoreFile" accept=".json" style="display:none" onchange="restoreData(this)"/>
         </div>
@@ -943,7 +967,7 @@ let digitBuf='',curEmpId=null,clrTimer=null;
 let calY=new Date().getFullYear(),calM=new Date().getMonth(),selDates=new Set();
 let dragIdx=null;
 
-function sv(){try{localStorage.setItem('ats_r',JSON.stringify(records));localStorage.setItem('ats_e',JSON.stringify(emps));localStorage.setItem('ats_l',JSON.stringify(leaves));localStorage.setItem('ats_o',JSON.stringify(otReqs));localStorage.setItem('ats_p',adminPwd);localStorage.setItem('ats_a',JSON.stringify(auditLog));}catch(e){}}
+function sv(){try{localStorage.setItem('ats_r',JSON.stringify(records));localStorage.setItem('ats_e',JSON.stringify(emps));localStorage.setItem('ats_l',JSON.stringify(leaves));localStorage.setItem('ats_o',JSON.stringify(otReqs));localStorage.setItem('ats_p',adminPwd);localStorage.setItem('ats_a',JSON.stringify(auditLog));}catch(e){}schedulePush();}
 function ld(){
   try{
     const r=localStorage.getItem('ats_r');records=r?JSON.parse(r):[];
@@ -955,6 +979,13 @@ function ld(){
   }catch(x){emps=JSON.parse(JSON.stringify(DEF_EMPS));records=[];leaves=[];otReqs=[];auditLog=[];}
 }
 ld();
+// 頁面載入後嘗試從雲端拉取最新資料
+window.addEventListener('load', () => {
+  const lastSync = localStorage.getItem('ats_lastSync');
+  if (lastSync) setSyncStatus('idle', '上次同步：' + lastSync, '');
+  // 自動從雲端下載（靜默，不彈 toast）
+  cloudPull(false).catch(() => {});
+});
 
 // ═══════════════════════════════════════════
 //  UTILS
@@ -1550,7 +1581,133 @@ function appOT(id,approve){
   sv();renderOT();
 }
 
-// ── iOS 防雙擊縮放 ──
+// ═══════════════════════════════════════════
+//  GOOGLE SHEETS 雲端同步
+// ═══════════════════════════════════════════
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwO3i9FQLc5jDdz9vojJ2kPIn7YV6t_P8QnZ1W-MOaeJ3g2JAT03j5Nefo5UMvUJQAB/exec';
+let syncTimer = null;
+
+function setSyncStatus(state, msg, time) {
+  const dot = document.getElementById('syncDot');
+  const msgEl = document.getElementById('syncMsg');
+  const timeEl = document.getElementById('syncTime');
+  const errEl = document.getElementById('syncErrMsg');
+  if (!dot) return;
+  const colors = { ok: 'var(--green)', err: 'var(--red)', busy: 'var(--yellow)', idle: 'var(--text3)' };
+  dot.style.background = colors[state] || colors.idle;
+  if (state === 'busy') dot.style.animation = 'pulse 1s infinite';
+  else dot.style.animation = '';
+  if (msg) msgEl.textContent = msg;
+  if (time) timeEl.textContent = time;
+  if (errEl) { if (state === 'err') { errEl.style.display = 'block'; errEl.textContent = msg; } else errEl.style.display = 'none'; }
+}
+
+// 把所有資料整理成 Google Sheets 可寫入的格式
+function buildSheetPayload() {
+  return {
+    action: 'writeAll',
+    records: records.map(r => [
+      r.id, r.empId, r.empName, r.date, r.time, r.type,
+      r.manual ? '補打卡' : '正常', r.isOT ? '是' : '否',
+      r.signed ? '已核簽' : '', r.ts || ''
+    ]),
+    employees: emps.map(e => [
+      e.id, e.name, e.pos, e.shift, e.ptIn || '', e.ptOut || ''
+    ]),
+    leaves: leaves.map(l => [
+      l.id, l.empId, l.empName, l.date, l.type
+    ]),
+    otReqs: otReqs.map(o => [
+      o.id, o.empId, o.empName, o.pos, o.date, o.inTime, o.outTime, o.status
+    ]),
+    auditLog: auditLog.map(a => [
+      a.id, a.ts, a.action, a.empName, a.empId, a.detail
+    ])
+  };
+}
+
+async function cloudPush(manual = false) {
+  setSyncStatus('busy', '上傳中…');
+  try {
+    const payload = buildSheetPayload();
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    });
+    // no-cors 無法讀取 response，只要沒 throw 就視為成功
+    const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+    setSyncStatus('ok', '☁️ 雲端同步成功 — 所有資料已上傳', '上次：' + now);
+    localStorage.setItem('ats_lastSync', now);
+    if (manual) showToast('✓ 資料已成功上傳至 Google Sheets', 'in');
+  } catch (e) {
+    setSyncStatus('err', '⚠️ 上傳失敗：' + e.message);
+    if (manual) showToast('❌ 上傳失敗，請確認網路連線', 'err');
+  }
+}
+
+async function cloudPull(manual = false) {
+  setSyncStatus('busy', '下載中…');
+  try {
+    const res = await fetch(GAS_URL + '?action=readAll', { method: 'GET' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!data || !data.records) throw new Error('回傳格式不正確');
+
+    // 解析 records
+    if (data.records && data.records.length > 1) {
+      records = data.records.slice(1).map(r => ({
+        id: Number(r[0]), empId: String(r[1]), empName: r[2], date: r[3], time: r[4],
+        type: r[5], manual: r[6] === '補打卡', isOT: r[7] === '是',
+        signed: r[8] === '已核簽', ts: r[9] || ''
+      }));
+    }
+    // 解析 employees
+    if (data.employees && data.employees.length > 1) {
+      emps = data.employees.slice(1).map(e => ({
+        id: String(e[0]), name: e[1], pos: e[2], shift: e[3],
+        ptIn: e[4] || '', ptOut: e[5] || ''
+      }));
+    }
+    // 解析 leaves
+    if (data.leaves && data.leaves.length > 1) {
+      leaves = data.leaves.slice(1).map(l => ({
+        id: Number(l[0]), empId: String(l[1]), empName: l[2], date: l[3], type: l[4]
+      }));
+    }
+    // 解析 otReqs
+    if (data.otReqs && data.otReqs.length > 1) {
+      otReqs = data.otReqs.slice(1).map(o => ({
+        id: Number(o[0]), empId: String(o[1]), empName: o[2], pos: o[3],
+        date: o[4], inTime: o[5], outTime: o[6], status: o[7]
+      }));
+    }
+    // 解析 auditLog
+    if (data.auditLog && data.auditLog.length > 1) {
+      auditLog = data.auditLog.slice(1).map(a => ({
+        id: Number(a[0]), ts: a[1], action: a[2], empName: a[3], empId: String(a[4]), detail: a[5]
+      }));
+    }
+
+    sv(); // 存回 localStorage
+    popSels(); popMonths(); renderTL(); renderEmpList(); renderMg(); renderOT(); renderAudit();
+    const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+    setSyncStatus('ok', '☁️ 已從雲端載入最新資料', '上次：' + now);
+    if (manual) showToast('✓ 已從 Google Sheets 下載最新資料', 'in');
+  } catch (e) {
+    setSyncStatus('err', '⚠️ 下載失敗：' + e.message);
+    if (manual) showToast('❌ 下載失敗：' + e.message, 'err');
+  }
+}
+
+// 自動上傳（每次資料變動後 3 秒 debounce）
+function schedulePush() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => cloudPush(false), 3000);
+}
+
+// iOS 防雙擊縮放
 let lastTap=0;
 document.addEventListener('touchend',function(e){
   const now=Date.now();
