@@ -1601,21 +1601,21 @@ function buildSheetPayload() {
   return {
     action: 'writeAll',
     records: records.map(r => [
-      r.id, r.empId, r.empName, r.date, r.time, r.type,
+      String(r.id), String(r.empId), r.empName, r.date, r.time || '', r.type,
       r.manual ? '補打卡' : '正常', r.isOT ? '是' : '否',
       r.signed ? '已核簽' : '', r.ts || ''
     ]),
     employees: emps.map(e => [
-      e.id, e.name, e.pos, e.shift, e.ptIn || '', e.ptOut || ''
+      String(e.id), e.name, e.pos, e.shift, e.ptIn || '', e.ptOut || ''
     ]),
     leaves: leaves.map(l => [
-      l.id, l.empId, l.empName, l.date, l.type
+      String(l.id), String(l.empId), l.empName, l.date, l.type
     ]),
     otReqs: otReqs.map(o => [
-      o.id, o.empId, o.empName, o.pos, o.date, o.inTime, o.outTime, o.status
+      String(o.id), String(o.empId), o.empName, o.pos, o.date, o.inTime || '', o.outTime || '', o.status
     ]),
     auditLog: auditLog.map(a => [
-      a.id, a.ts, a.action, a.empName, a.empId, a.detail
+      String(a.id), a.ts, a.action, a.empName, String(a.empId), a.detail
     ])
   };
 }
@@ -1665,51 +1665,119 @@ function cloudPull(manual = false) {
       try {
         if (!data) throw new Error('無資料回傳');
 
-        // ── 解析 leaves（班表）──
+        // ── 工具函式：修正 Google Sheets 自動轉換問題 ──
+
+        // 日期：Sheets 可能回傳 "2026-04-07T07:00:00.000Z" → 取前10碼 "2026-04-07"
+        function fixDate(v) {
+          if (!v) return '';
+          var s = String(v);
+          // ISO 格式：取前10碼
+          if (s.length >= 10 && s[4] === '-') return s.slice(0, 10);
+          return s;
+        }
+
+        // 時間：Sheets 可能把 "08:30:00" 存成日期物件或 "1899-12-31T00:30:00.000Z"
+        // 1899-12-31 是 Excel 時間序列的起點，取時間部分即可
+        function fixTime(v) {
+          if (!v) return '';
+          var s = String(v);
+          // "1899-12-31T08:30:00.000Z" → 擷取時間部分並加8小時時區補正
+          if (s.indexOf('1899-12-31T') === 0 || s.indexOf('T') > 0) {
+            // 取 T 後面的 HH:MM:SS
+            var tPart = s.split('T')[1] || '';
+            var hms = tPart.slice(0, 8); // "08:30:00"
+            // 如果已是 HH:MM:SS 格式直接回傳
+            if (/^\d{2}:\d{2}:\d{2}$/.test(hms)) return hms;
+          }
+          // 已是 HH:MM:SS 格式
+          if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0, 8).padEnd(8, ':00');
+          return s;
+        }
+
+        // 員工ID：Sheets 可能把 "0001" 存成數字 1，需補回前置零
+        function fixEmpId(v) {
+          if (v === '' || v === null || v === undefined) return '';
+          var s = String(v).trim();
+          // 純數字且長度不足4碼 → 補前置零
+          if (/^\d+$/.test(s) && s.length < 4) return s.padStart(4, '0');
+          return s;
+        }
+
+        // ── 解析 leaves（休假/班表）──
         if (data.leaves && data.leaves.length > 1) {
-          leaves = data.leaves.slice(1).filter(l => l[0] !== '').map(l => ({
-            id: Number(l[0]) || (Date.now() + Math.random()),
-            empId: String(l[1]),
-            empName: l[2],
-            date: String(l[3]),
-            type: l[4]
-          }));
+          leaves = data.leaves.slice(1).filter(function(l){ return l[0] !== '' && l[0] !== null; }).map(function(l) {
+            return {
+              id: Number(l[0]) || (Date.now() + Math.random()),
+              empId: fixEmpId(l[1]),
+              empName: String(l[2] || ''),
+              date: fixDate(l[3]),
+              type: String(l[4] || '')
+            };
+          });
         } else {
           leaves = [];
         }
 
         // ── 解析 records（打卡記錄）──
         if (data.records && data.records.length > 1) {
-          records = data.records.slice(1).filter(r => r[0] !== '').map(r => ({
-            id: Number(r[0]), empId: String(r[1]), empName: r[2],
-            date: String(r[3]), time: String(r[4]), type: r[5],
-            manual: r[6] === '補打卡', isOT: r[7] === '是',
-            signed: r[8] === '已核簽', ts: r[9] || ''
-          }));
+          records = data.records.slice(1).filter(function(r){ return r[0] !== '' && r[0] !== null; }).map(function(r) {
+            return {
+              id: Number(r[0]),
+              empId: fixEmpId(r[1]),
+              empName: String(r[2] || ''),
+              date: fixDate(r[3]),
+              time: fixTime(r[4]),
+              type: String(r[5] || ''),
+              manual: r[6] === '補打卡',
+              isOT: r[7] === '是',
+              signed: r[8] === '已核簽',
+              ts: String(r[9] || '')
+            };
+          });
         }
 
         // ── 解析 employees（員工名冊）──
         if (data.employees && data.employees.length > 1) {
-          emps = data.employees.slice(1).filter(e => e[0] !== '').map(e => ({
-            id: String(e[0]), name: e[1], pos: e[2], shift: e[3],
-            ptIn: e[4] || '', ptOut: e[5] || ''
-          }));
+          emps = data.employees.slice(1).filter(function(e){ return e[0] !== '' && e[0] !== null; }).map(function(e) {
+            return {
+              id: fixEmpId(e[0]),
+              name: String(e[1] || ''),
+              pos: String(e[2] || ''),
+              shift: String(e[3] || 'fixed'),
+              ptIn: String(e[4] || ''),
+              ptOut: String(e[5] || '')
+            };
+          });
         }
 
         // ── 解析 otReqs（加班申請）──
         if (data.otReqs && data.otReqs.length > 1) {
-          otReqs = data.otReqs.slice(1).filter(o => o[0] !== '').map(o => ({
-            id: Number(o[0]), empId: String(o[1]), empName: o[2], pos: o[3],
-            date: String(o[4]), inTime: o[5], outTime: o[6], status: o[7]
-          }));
+          otReqs = data.otReqs.slice(1).filter(function(o){ return o[0] !== '' && o[0] !== null; }).map(function(o) {
+            return {
+              id: Number(o[0]),
+              empId: fixEmpId(o[1]),
+              empName: String(o[2] || ''),
+              pos: String(o[3] || ''),
+              date: fixDate(o[4]),
+              inTime: fixTime(o[5]),
+              outTime: fixTime(o[6]),
+              status: String(o[7] || 'pending')
+            };
+          });
         }
 
         // ── 解析 auditLog（稽核日誌）──
         if (data.auditLog && data.auditLog.length > 1) {
-          auditLog = data.auditLog.slice(1).filter(a => a[0] !== '').map(a => ({
-            id: Number(a[0]), ts: a[1], action: a[2],
-            empName: a[3], empId: String(a[4]), detail: a[5]
-          }));
+          auditLog = data.auditLog.slice(1).filter(function(a){ return a[0] !== '' && a[0] !== null; }).map(function(a) {
+            return {
+              id: Number(a[0]),
+              ts: String(a[1] || ''),
+              action: String(a[2] || ''),
+              empName: String(a[3] || ''),
+              empId: fixEmpId(a[4]),
+              detail: String(a[5] || '')
+            };
+          });
         }
 
         // 存回 localStorage（不觸發雲端上傳）
