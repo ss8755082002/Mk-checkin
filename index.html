@@ -980,13 +980,6 @@ function ld(){
   }catch(x){emps=JSON.parse(JSON.stringify(DEF_EMPS));records=[];leaves=[];otReqs=[];auditLog=[];}
 }
 ld();
-// 頁面載入後嘗試從雲端拉取最新資料
-window.addEventListener('load', () => {
-  const lastSync = localStorage.getItem('ats_lastSync');
-  if (lastSync) setSyncStatus('idle', '上次同步：' + lastSync, '');
-  // 自動從雲端下載（靜默，不彈 toast）
-  cloudPull(false).catch(() => {});
-});
 
 // ═══════════════════════════════════════════
 //  UTILS
@@ -1766,9 +1759,24 @@ document.addEventListener('touchend',function(e){
 
 // ── 防止頁面整體被縮放 ──
 document.addEventListener('gesturestart',function(e){e.preventDefault();},{passive:false});
-document.addEventListener('gesturechange',function(e){e.preventDefault();},{passive:false});popMonths();renderTL();renderEmpList();renderStaffCal();
+document.addEventListener('gesturechange',function(e){e.preventDefault();},{passive:false});
+
+// ── 初始化畫面 ──
+popMonths();renderTL();renderEmpList();renderStaffCal();
 document.getElementById('recFrom').value=today().slice(0,7)+'-01';
 document.getElementById('recTo').value=today();
+
+// ── 頁面完全載入後，從雲端同步最新資料（所有函式此時已定義）──
+(function initCloudSync() {
+  const lastSync = localStorage.getItem('ats_lastSync');
+  if (lastSync) {
+    const el = document.getElementById('syncMsg');
+    const dot = document.getElementById('syncDot');
+    if (el) el.textContent = '上次同步：' + lastSync + '（同步中…）';
+    if (dot) dot.style.background = 'var(--yellow)';
+  }
+  cloudPull(false);
+})();
 </script>
 </body>
 </html>
