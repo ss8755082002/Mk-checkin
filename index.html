@@ -967,7 +967,8 @@ let digitBuf='',curEmpId=null,clrTimer=null;
 let calY=new Date().getFullYear(),calM=new Date().getMonth(),selDates=new Set();
 let dragIdx=null;
 
-function sv(){try{localStorage.setItem('ats_r',JSON.stringify(records));localStorage.setItem('ats_e',JSON.stringify(emps));localStorage.setItem('ats_l',JSON.stringify(leaves));localStorage.setItem('ats_o',JSON.stringify(otReqs));localStorage.setItem('ats_p',adminPwd);localStorage.setItem('ats_a',JSON.stringify(auditLog));}catch(e){}schedulePush();}
+function svLocal(){try{localStorage.setItem('ats_r',JSON.stringify(records));localStorage.setItem('ats_e',JSON.stringify(emps));localStorage.setItem('ats_l',JSON.stringify(leaves));localStorage.setItem('ats_o',JSON.stringify(otReqs));localStorage.setItem('ats_p',adminPwd);localStorage.setItem('ats_a',JSON.stringify(auditLog));}catch(e){}}
+function sv(){svLocal();schedulePush();}
 function ld(){
   try{
     const r=localStorage.getItem('ats_r');records=r?JSON.parse(r):[];
@@ -1647,58 +1648,106 @@ async function cloudPush(manual = false) {
   }
 }
 
-async function cloudPull(manual = false) {
+// 用 JSONP 方式繞過 CORS（平板 iOS/Android 均相容）
+function cloudPull(manual = false) {
   setSyncStatus('busy', '下載中…');
-  try {
-    const res = await fetch(GAS_URL + '?action=readAll', { method: 'GET' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (!data || !data.records) throw new Error('回傳格式不正確');
+  return new Promise((resolve) => {
+    const cbName = '_gasCb_' + Date.now();
+    const script = document.createElement('script');
+    const timer = setTimeout(() => {
+      cleanup();
+      setSyncStatus('err', '⚠️ 下載逾時，請確認網路');
+      if (manual) showToast('❌ 下載逾時，請重試', 'err');
+      resolve();
+    }, 15000);
 
-    // 解析 records
-    if (data.records && data.records.length > 1) {
-      records = data.records.slice(1).map(r => ({
-        id: Number(r[0]), empId: String(r[1]), empName: r[2], date: r[3], time: r[4],
-        type: r[5], manual: r[6] === '補打卡', isOT: r[7] === '是',
-        signed: r[8] === '已核簽', ts: r[9] || ''
-      }));
-    }
-    // 解析 employees
-    if (data.employees && data.employees.length > 1) {
-      emps = data.employees.slice(1).map(e => ({
-        id: String(e[0]), name: e[1], pos: e[2], shift: e[3],
-        ptIn: e[4] || '', ptOut: e[5] || ''
-      }));
-    }
-    // 解析 leaves
-    if (data.leaves && data.leaves.length > 1) {
-      leaves = data.leaves.slice(1).map(l => ({
-        id: Number(l[0]), empId: String(l[1]), empName: l[2], date: l[3], type: l[4]
-      }));
-    }
-    // 解析 otReqs
-    if (data.otReqs && data.otReqs.length > 1) {
-      otReqs = data.otReqs.slice(1).map(o => ({
-        id: Number(o[0]), empId: String(o[1]), empName: o[2], pos: o[3],
-        date: o[4], inTime: o[5], outTime: o[6], status: o[7]
-      }));
-    }
-    // 解析 auditLog
-    if (data.auditLog && data.auditLog.length > 1) {
-      auditLog = data.auditLog.slice(1).map(a => ({
-        id: Number(a[0]), ts: a[1], action: a[2], empName: a[3], empId: String(a[4]), detail: a[5]
-      }));
+    function cleanup() {
+      clearTimeout(timer);
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete window[cbName];
     }
 
-    sv(); // 存回 localStorage
-    popSels(); popMonths(); renderTL(); renderEmpList(); renderMg(); renderOT(); renderAudit();
-    const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
-    setSyncStatus('ok', '☁️ 已從雲端載入最新資料', '上次：' + now);
-    if (manual) showToast('✓ 已從 Google Sheets 下載最新資料', 'in');
-  } catch (e) {
-    setSyncStatus('err', '⚠️ 下載失敗：' + e.message);
-    if (manual) showToast('❌ 下載失敗：' + e.message, 'err');
-  }
+    window[cbName] = function(data) {
+      cleanup();
+      try {
+        if (!data) throw new Error('無資料回傳');
+
+        // ── 解析 leaves（班表）──
+        if (data.leaves && data.leaves.length > 1) {
+          leaves = data.leaves.slice(1).filter(l => l[0] !== '').map(l => ({
+            id: Number(l[0]) || (Date.now() + Math.random()),
+            empId: String(l[1]),
+            empName: l[2],
+            date: String(l[3]),
+            type: l[4]
+          }));
+        } else {
+          leaves = [];
+        }
+
+        // ── 解析 records（打卡記錄）──
+        if (data.records && data.records.length > 1) {
+          records = data.records.slice(1).filter(r => r[0] !== '').map(r => ({
+            id: Number(r[0]), empId: String(r[1]), empName: r[2],
+            date: String(r[3]), time: String(r[4]), type: r[5],
+            manual: r[6] === '補打卡', isOT: r[7] === '是',
+            signed: r[8] === '已核簽', ts: r[9] || ''
+          }));
+        }
+
+        // ── 解析 employees（員工名冊）──
+        if (data.employees && data.employees.length > 1) {
+          emps = data.employees.slice(1).filter(e => e[0] !== '').map(e => ({
+            id: String(e[0]), name: e[1], pos: e[2], shift: e[3],
+            ptIn: e[4] || '', ptOut: e[5] || ''
+          }));
+        }
+
+        // ── 解析 otReqs（加班申請）──
+        if (data.otReqs && data.otReqs.length > 1) {
+          otReqs = data.otReqs.slice(1).filter(o => o[0] !== '').map(o => ({
+            id: Number(o[0]), empId: String(o[1]), empName: o[2], pos: o[3],
+            date: String(o[4]), inTime: o[5], outTime: o[6], status: o[7]
+          }));
+        }
+
+        // ── 解析 auditLog（稽核日誌）──
+        if (data.auditLog && data.auditLog.length > 1) {
+          auditLog = data.auditLog.slice(1).filter(a => a[0] !== '').map(a => ({
+            id: Number(a[0]), ts: a[1], action: a[2],
+            empName: a[3], empId: String(a[4]), detail: a[5]
+          }));
+        }
+
+        // 存回 localStorage（不觸發雲端上傳）
+        svLocal();
+
+        // 全面更新畫面（含班表 renderCal / renderStaffCal）
+        popSels(); popMonths();
+        renderTL(); renderEmpList();
+        renderCal(); renderStaffCal();
+        renderMg(); renderOT(); renderAudit();
+
+        const now = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        localStorage.setItem('ats_lastSync', now);
+        setSyncStatus('ok', '☁️ 雲端同步成功', '上次：' + now);
+        if (manual) showToast('✓ 已從 Google Sheets 下載最新資料（含班表）', 'in');
+      } catch(e) {
+        setSyncStatus('err', '⚠️ 解析失敗：' + e.message);
+        if (manual) showToast('❌ 資料解析失敗：' + e.message, 'err');
+      }
+      resolve();
+    };
+
+    script.src = GAS_URL + '?action=readAll&callback=' + cbName;
+    script.onerror = () => {
+      cleanup();
+      setSyncStatus('err', '⚠️ 網路錯誤，無法連接雲端');
+      if (manual) showToast('❌ 無法連接 Google Sheets，請檢查網路', 'err');
+      resolve();
+    };
+    document.head.appendChild(script);
+  });
 }
 
 // 自動上傳（每次資料變動後 3 秒 debounce）
