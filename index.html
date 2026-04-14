@@ -484,7 +484,8 @@ select.inp option { background: var(--bg2); }
 .lv-swatch { width: 10px; height: 10px; border-radius: 3px; }
 
 /* ── Staff Grid ── */
-.staff-scroll { overflow-x: auto; }
+.staff-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; cursor: grab; }
+.staff-scroll:active { cursor: grabbing; }
 .staff-grid {
   display: grid;
   gap: 1px;
@@ -984,7 +985,13 @@ ld();
 // ═══════════════════════════════════════════
 //  UTILS
 // ═══════════════════════════════════════════
-const today=()=>new Date().toISOString().slice(0,10);
+// 取本地日期（避免 toISOString 用 UTC 導致跨日錯誤）
+function localDate(d){
+  const n=d||new Date();
+  return `${n.getFullYear()}-${pad(n.getMonth()+1)}-${pad(n.getDate())}`;
+}
+function punchDate(){ return localDate(); }
+const today=()=>localDate();
 const ftm=d=>d.toTimeString().slice(0,8);
 const t2m=s=>{const[h,m]=s.split(':').map(Number);return h*60+m;};
 const pad=n=>String(n).padStart(2,'0');
@@ -1086,13 +1093,14 @@ function updBtns(){
   const bI=document.getElementById('bIn'),bO=document.getElementById('bOut');
   bI.disabled=!curEmpId;
   if(!curEmpId){bO.disabled=true;return;}
-  bO.disabled=!records.some(r=>r.empId===curEmpId&&r.date===today()&&r.type==='上班');
+  bO.disabled=!records.some(r=>r.empId===curEmpId&&r.date===punchDate()&&r.type==='上班');
 }
 function punch(type){
   if(!curEmpId)return;
   const emp=emps.find(e=>e.id===curEmpId);
   const now=new Date(),time=ftm(now);
-  const tr=records.filter(r=>r.empId===curEmpId&&r.date===today());
+  const pd=punchDate();
+  const tr=records.filter(r=>r.empId===curEmpId&&r.date===pd);
   const pIn=tr.find(r=>r.type==='上班'),pOut=tr.find(r=>r.type==='下班');
   if(type==='下班'&&!pIn){showToast(`${emp.name} 尚未打上班卡`,'warn');return;}
   if(type==='上班'&&pIn){showToast(`${emp.name} 今日已於 ${pIn.time} 打上班卡`,'warn');return;}
@@ -1100,17 +1108,17 @@ function punch(type){
   const tMin=t2m(time.slice(0,5));
   let isOT=false;
   if(type==='下班'){const ref=emp.shift==='parttime'?t2m(emp.ptOut||'16:30'):WORK_OUT;if(tMin>ref+OT_GRACE)isOT=true;}
-  const rec={id:Date.now(),empId:emp.id,empName:emp.name,date:today(),ts:now.toISOString(),time,type,manual:false,isOT:false};
+  const rec={id:Date.now(),empId:emp.id,empName:emp.name,date:pd,ts:now.toISOString(),time,type,manual:false,isOT:false};
   records.unshift(rec);
   if(isOT){
-    otReqs.push({id:Date.now()+1,empId:emp.id,empName:emp.name,pos:emp.pos,date:today(),inTime:pIn?pIn.time:'',outTime:time,status:'pending',recId:rec.id});
+    otReqs.push({id:Date.now()+1,empId:emp.id,empName:emp.name,pos:emp.pos,date:pd,inTime:pIn?pIn.time:'',outTime:time,status:'pending',recId:rec.id});
     showToast(`✓ ${emp.name} 下班 ${time}　⚠ 超時30分，加班申請待簽核`,'warn');
   }else{
     showToast(`✓ ${emp.name} ${type}打卡成功　${time}`,type==='上班'?'in':'out');
   }
   sv();updBtns();renderTL();
   clearTimeout(clrTimer);
-  clrTimer=setTimeout(()=>{digitBuf='';curEmpId=null;updDn('請輸入<br>員工編號','');updDv();updBtns();},1000);
+  clrTimer=setTimeout(()=>{digitBuf='';curEmpId=null;updDn('請輸入<br>員工編號','');updDv();updBtns();},400);
 }
 function showToast(msg,t){
   const toast=document.getElementById('toast');
@@ -1119,7 +1127,7 @@ function showToast(msg,t){
 }
 
 function renderTL(){
-  const rs=records.filter(r=>r.date===today()).slice(0,15);
+  const rs=records.filter(r=>r.date===punchDate()).slice(0,15);
   document.getElementById('todayLog').innerHTML=rs.length?rs.map(r=>`<tr>
     <td class="emp-name">${r.empName}${r.manual?'<span class="badge b-man" style="margin-left:6px;font-size:10px;">補</span>':''}</td>
     <td class="mono">${r.date}</td>
@@ -1502,7 +1510,22 @@ function getAnomalies(ef,df){
 function renderMg(){
   const e=document.getElementById('mgEmp').value,d=document.getElementById('mgDate').value;
   const items=getAnomalies(e,d);
-  document.getElementById('mgBody').innerHTML=items.length?`<table class="log-table">
+  // 同時顯示補打卡記錄（可刪除）
+  const manualRecs=records.filter(r=>r.manual&&(e?r.empId===e:true)&&(d?r.date===d:true));
+  let manualHtml='';
+  if(manualRecs.length){
+    manualHtml=`<div style="margin-bottom:14px;">
+      <div style="font-size:11px;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px;">補打卡記錄（可刪除）</div>
+      <table class="log-table"><thead><tr><th>員工</th><th>日期</th><th>時間</th><th>類別</th><th></th></tr></thead>
+      <tbody>${manualRecs.map(r=>`<tr>
+        <td class="emp-name">${r.empName}<span class="badge b-man" style="margin-left:6px;font-size:10px;">補</span></td>
+        <td class="mono">${r.date}</td><td class="mono">${r.time}</td>
+        <td><span class="badge ${r.type==='上班'?'b-in':'b-out'}">${r.type}</span></td>
+        <td><button class="btn btn-danger btn-sm" onclick="delRec(${r.id})">🗑 刪除</button></td>
+      </tr>`).join('')}</tbody></table>
+    </div>`;
+  }
+  document.getElementById('mgBody').innerHTML=manualHtml+(items.length?`<table class="log-table">
     <thead><tr><th>員工</th><th>日期</th><th>時間</th><th>類別</th><th>異常</th><th></th></tr></thead>
     <tbody>${items.map(r=>{
       const signed=r.signed||false;
@@ -1519,7 +1542,7 @@ function renderMg(){
         <td>${signed?'<span style="font-size:11px;color:var(--text3);">已核簽</span>':`<button class="btn btn-approve btn-sm" onclick="signRec(${r.id})">核簽</button>`}</td>
       </tr>`;
     }).join('')}</tbody></table>`:
-    '<div style="padding:20px;text-align:center;color:var(--green);font-size:13px;">✓ 無異常記錄</div>';
+    '<div style="padding:20px;text-align:center;color:var(--green);font-size:13px;">✓ 無異常記錄</div>');
 }
 function signRec(id){
   const rec=records.find(r=>r.id===id);
@@ -1818,7 +1841,7 @@ function schedulePush() {
   syncTimer = setTimeout(() => cloudPush(false), 3000);
 }
 
-// iOS 防雙擊縮放
+// iOS防雙擊縮放
 let lastTap=0;
 document.addEventListener('touchend',function(e){
   const now=Date.now();
@@ -1829,6 +1852,17 @@ document.addEventListener('touchend',function(e){
 // ── 防止頁面整體被縮放 ──
 document.addEventListener('gesturestart',function(e){e.preventDefault();},{passive:false});
 document.addEventListener('gesturechange',function(e){e.preventDefault();},{passive:false});
+
+// ── 班表橫向觸控滑動 ──
+(function(){
+  const el=document.querySelector('.staff-scroll');
+  if(!el)return;
+  let isDown=false,startX=0,scrollLeft=0;
+  el.addEventListener('mousedown',e=>{isDown=true;startX=e.pageX-el.offsetLeft;scrollLeft=el.scrollLeft;el.style.cursor='grabbing';});
+  el.addEventListener('mouseleave',()=>{isDown=false;el.style.cursor='grab';});
+  el.addEventListener('mouseup',()=>{isDown=false;el.style.cursor='grab';});
+  el.addEventListener('mousemove',e=>{if(!isDown)return;e.preventDefault();const x=e.pageX-el.offsetLeft;el.scrollLeft=scrollLeft-(x-startX);});
+})();
 
 // ── 初始化畫面 ──
 popMonths();renderTL();renderEmpList();renderStaffCal();
