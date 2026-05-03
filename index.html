@@ -940,7 +940,7 @@ const POS=['負責人','外場主管','外場副主管','外場領班','資深�
 const LV_BG={'排休':'#3a3a52','指休':'#2a3a62','特休':'#1a3a5a','病假':'#5a1a24'};
 const LV_FG={'排休':'#a8a8c8','指休':'#7898e8','特休':'#5b9cf6','病假':'#f08090'};
 const LEAVE_COUNT=['排休','特休'];
-const WORK_IN=7*60+30,WORK_OUT=16*60+30,OT_GRACE=30,EARLY=60;
+const WORK_IN=7*60+30,WORK_OUT=16*60+30,OT_GRACE=31,EARLY=31;
 
 const DEF_EMPS=[
   {id:'0001',name:'郭于楨',pos:'外場主管',shift:'fixed',ptIn:'',ptOut:''},
@@ -998,10 +998,11 @@ const pad=n=>String(n).padStart(2,'0');
 
 function calcH(inT,outT,emp){
   const aIn=t2m(inT.slice(0,5)),aOut=t2m(outT.slice(0,5));
-  if(isManager(emp)){const raw=(aOut-aIn)/60-.5;return raw>0?Math.floor(raw*2)/2:0;}
-  const ref=emp.shift==='parttime'?t2m(emp.ptIn||'07:30'):WORK_IN;
+  // 僅當工作時段涵蓋 15:30-16:00 時才扣除 0.5h 休息
+  const deduct=(aIn<=15*60+30&&aOut>=16*60)?0.5:0;
+  const ref=(emp.shift==='parttime'||isManager(emp))?t2m(emp.ptIn||'07:30'):WORK_IN;
   const start=aIn<=ref-EARLY?aIn:ref;
-  const raw=(aOut-start)/60-.5;
+  const raw=(aOut-start)/60-deduct;
   if(raw<=0)return 0;
   return Math.floor(raw*2)/2;
 }
@@ -1107,12 +1108,24 @@ function punch(type){
   if(type==='下班'&&pOut){showToast(`${emp.name} 今日已於 ${pOut.time} 打下班卡`,'warn');return;}
   const tMin=t2m(time.slice(0,5));
   let isOT=false;
-  if(type==='下班'){const ref=emp.shift==='parttime'?t2m(emp.ptOut||'16:30'):WORK_OUT;if(tMin>ref+OT_GRACE)isOT=true;}
+  if(!isManager(emp)){
+    const refOut=emp.shift==='parttime'?t2m(emp.ptOut||'16:30'):WORK_OUT;
+    const refIn=emp.shift==='parttime'?t2m(emp.ptIn||'07:30'):WORK_IN;
+    if(type==='下班'&&tMin>refOut+OT_GRACE)isOT=true;
+    if(type==='上班'&&tMin<refIn-EARLY)isOT=true;
+  }
   const rec={id:Date.now(),empId:emp.id,empName:emp.name,date:pd,ts:now.toISOString(),time,type,manual:false,isOT:false};
   records.unshift(rec);
   if(isOT){
-    otReqs.push({id:Date.now()+1,empId:emp.id,empName:emp.name,pos:emp.pos,date:pd,inTime:pIn?pIn.time:'',outTime:time,status:'pending',recId:rec.id});
-    showToast(`✓ ${emp.name} 下班 ${time}　⚠ 超時30分，加班申請待簽核`,'warn');
+    const isEarlyIn=(type==='上班');
+    otReqs.push({id:Date.now()+1,empId:emp.id,empName:emp.name,pos:emp.pos,date:pd,
+      inTime:isEarlyIn?time:(pIn?pIn.time:''),
+      outTime:isEarlyIn?'':time,
+      status:'pending',recId:rec.id});
+    showToast(isEarlyIn
+      ?`✓ ${emp.name} 上班 ${time}　⚠ 提早31分，加班申請待簽核`
+      :`✓ ${emp.name} 下班 ${time}　⚠ 超時31分，加班申請待簽核`
+    ,'warn');
   }else{
     showToast(`✓ ${emp.name} ${type}打卡成功　${time}`,type==='上班'?'in':'out');
   }
@@ -1159,8 +1172,8 @@ function analyseDay(emp,date){
   if(isLv(emp.id,date)){return{cls:'lv',rem:getLvT(emp.id,date),h:'',inT:'',outT:'',man:false,ot:false,isLv:true};}
   const dr=records.filter(r=>r.empId===emp.id&&r.date===date);
   const ir=dr.find(r=>r.type==='上班'),or=dr.find(r=>r.type==='下班');
-  const refIn=emp.shift==='parttime'?t2m(emp.ptIn||'07:30'):WORK_IN;
-  const refOut=emp.shift==='parttime'?t2m(emp.ptOut||'16:30'):WORK_OUT;
+  const refIn=(emp.shift==='parttime'||isManager(emp))?t2m(emp.ptIn||'07:30'):WORK_IN;
+  const refOut=(emp.shift==='parttime'||isManager(emp))?t2m(emp.ptOut||'16:30'):WORK_OUT;
   if(!ir&&!or)return{cls:'abs',rem:'缺勤',h:'',inT:'',outT:'',man:false,ot:false,isLv:false};
   if(!ir)return{cls:'late',rem:'缺上班卡',h:'',inT:'',outT:or.time,man:or.manual,ot:false,isLv:false};
   if(!or)return{cls:'late',rem:'缺下班卡',h:'',inT:ir.time,outT:'',man:ir.manual,ot:false,isLv:false};
