@@ -1200,10 +1200,19 @@ function analyseDay(emp,date){
   if(otR)ot=true;
   else if(otP){effOut=refOut;rem='加班待簽核';}
   else if(outM>refOut+OT_GRACE){effOut=refOut;}
+  // 正職早退規則：4分鐘寬限自動補正；超過4分鐘需核簽才補正至16:30
+  if(emp.shift==='fixed'&&!ot){
+    if(outM>=refOut-4&&outM<refOut){effOut=refOut;}
+    else if(outM<refOut-4){
+      if(or.signed){effOut=refOut;}
+      else{rem=(rem?rem+' ':'')+'早退';cls='late';}
+    }
+  }
+  // 兼職早退：提前30分鐘以上
+  if(!ot&&emp.shift==='parttime'&&outM<refOut-30){rem=(rem?rem+' ':'')+'早退';cls='late';}
   const effOutStr=`${pad(Math.floor(effOut/60))}:${pad(effOut%60)}:00`;
   const h=calcH(ir.time,ot?or.time:effOutStr,emp);
   if(inM>refIn+1){rem=(rem?rem+' ':'')+'遲到';cls='late';}
-  if(!ot&&outM<refOut-30){rem=(rem?rem+' ':'')+'早退';cls='late';}
   if(!rem)cls=ot?'ot':'ok';
   return{cls,rem,h,inT:ir.time,outT:or.time,man:ir.manual||or.manual,ot,isLv:false};
 }
@@ -1216,7 +1225,7 @@ function renderRpt(){
   const[y,m]=month.split('-');const dim=new Date(+y,+m,0).getDate();
   const days=[];for(let d=1;d<=dim;d++)days.push(`${y}-${m}-${pad(d)}`);
   const es=ef?emps.filter(e=>e.id===ef):activeEmps();
-  const rows=[];let tw=0,tl=0,tlt=0,th=0;
+  const rows=[];let tw=0,tl=0,tlt=0,th=0,tot=0;
   es.forEach(emp=>{
     const schLeaves=leaves.filter(l=>l.empId===emp.id&&l.date.startsWith(`${y}-${m}`)&&LEAVE_SCHEDULED.includes(l.type)).length;
     tl+=schLeaves;
@@ -1226,16 +1235,28 @@ function renderRpt(){
       if(date>today())return;
       const a=analyseDay(emp,date);
       if(a.isLv){if(LEAVE_COUNT_ACTUAL.includes(lvType))tl++;}
-      else{if(a.cls==='ok'||a.cls==='ot')tw++;if(a.cls==='late')tlt++;if(typeof a.h==='number')th+=a.h;}
+      else{
+        if(a.cls==='ok'||a.cls==='ot')tw++;
+        if(a.cls==='late')tlt++;
+        if(typeof a.h==='number'){
+          th+=a.h;
+          if(emp.shift==='fixed')tot+=a.h-8.5; // 正職加班/補休累計
+        }
+      }
       rows.push({name:emp.name,pos:emp.pos,date,...a});
     });
   });
+  const tv=dim*es.length-tw; // 休假天數 = 月份總人日 - 上班天數
+  const totR=Math.round(tot*2)/2;
+  const totStr=(totR>=0?'+':'')+totR+'h';
   const bm={ok:'b-ok',late:'b-late',abs:'b-abs',lv:'b-lv',ot:'b-ot'};
   document.getElementById('rptStat').innerHTML=`
     <div class="stat-card green"><div class="stat-label">上班天數</div><div class="stat-val">${tw}</div></div>
-    <div class="stat-card"><div class="stat-label">休假天數</div><div class="stat-val">${tl}</div></div>
+    <div class="stat-card"><div class="stat-label">排假天數</div><div class="stat-val">${tl}</div></div>
+    <div class="stat-card"><div class="stat-label">休假天數</div><div class="stat-val">${tv}</div></div>
     <div class="stat-card"><div class="stat-label">遲到漏打</div><div class="stat-val">${tlt}</div></div>
-    <div class="stat-card green"><div class="stat-label">總工時</div><div class="stat-val">${th}h</div></div>`;
+    <div class="stat-card green"><div class="stat-label">總工時</div><div class="stat-val">${th}h</div></div>
+    <div class="stat-card ${totR>=0?'green':''}"><div class="stat-label">加班/補休工時</div><div class="stat-val" style="${totR<0?'color:var(--red);':''}">${totStr}</div></div>`;
   document.getElementById('rptBody').innerHTML=rows.length?rows.map(r=>`<tr>
     <td class="emp-name">${r.name}${r.man?'<span class="badge b-man" style="margin-left:6px;font-size:10px;">補</span>':''}</td>
     <td style="color:var(--text3);">${r.pos}</td><td class="mono">${r.date}</td>
