@@ -493,7 +493,7 @@ select.inp option { background: var(--bg2); }
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
-  min-width: 700px;
+  width: max-content;
 }
 .sgc {
   background: var(--bg2);
@@ -1000,8 +1000,14 @@ function calcH(inT,outT,emp){
   const aIn=t2m(inT.slice(0,5)),aOut=t2m(outT.slice(0,5));
   // 僅當工作時段涵蓋 15:30-16:00 時才扣除 0.5h 休息
   const deduct=(aIn<=15*60+30&&aOut>=16*60)?0.5:0;
-  const ref=(emp.shift==='parttime'||isManager(emp))?t2m(emp.ptIn||'07:30'):WORK_IN;
-  const start=aIn<=ref-EARLY?aIn:ref;
+  let start;
+  if(emp.shift==='parttime'||isManager(emp)){
+    // 兼職/主管：打卡時間無條件進位至 0.5h 為有效上班起點
+    start=Math.ceil(aIn/30)*30;
+  }else{
+    // 正職：提前31min以上從實際時間算(OT)；遲到從實際打卡時間算；其餘從 WORK_IN 算
+    start=aIn<=WORK_IN-EARLY?aIn:Math.max(aIn,WORK_IN);
+  }
   const raw=(aOut-start)/60-deduct;
   if(raw<=0)return 0;
   return Math.floor(raw*2)/2;
@@ -1349,7 +1355,7 @@ function renderStaffCal(){
   if(lbl)lbl.textContent=`${scmY} 年 ${scmM} 月`;
   const dim=new Date(+y,+m,0).getDate();
   const ae=activeEmps();
-  let h=`<div class="staff-grid" style="grid-template-columns:80px repeat(${dim},1fr);">`;
+  let h=`<div class="staff-grid" style="grid-template-columns:80px repeat(${dim},28px);">`;
   h+=`<div class="sgc hd nm">員工</div>`;
   for(let d=1;d<=dim;d++){
     const ds=`${y}-${m}-${pad(d)}`,dow=new Date(ds).getDay();
