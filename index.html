@@ -958,7 +958,7 @@ const POS=['負責人','外場主管','外場副主管','外場領班','資深�
 const LV_BG={'排休':'#3a3a52','指休':'#2a3a62','特休':'#1a3a5a','病假':'#5a1a24'};
 const LV_FG={'排休':'#a8a8c8','指休':'#7898e8','特休':'#5b9cf6','病假':'#f08090'};
 const LEAVE_COUNT=['排休','特休'];
-const WORK_IN=7*60+30,WORK_OUT=16*60+30,OT_GRACE=31,EARLY=31;
+const WORK_IN=7*60+30,WORK_OUT=16*60+30,OT_GRACE=28,EARLY=31;
 
 const DEF_EMPS=[
   {id:'0001',name:'郭于楨',pos:'外場主管',shift:'fixed',ptIn:'',ptOut:''},
@@ -1604,7 +1604,17 @@ function addManual(){
   records.unshift(rec);
   const now=new Date().toLocaleString('zh-TW');
   auditLog.unshift({id:Date.now()+1,ts:now,action:'補打卡',empName:emp.name,empId:eId,detail:`${date} ${time} ${type}`});
-  sv();renderMg();renderAudit();alert(`✓ 補打卡成功：${emp.name} ${date} ${time} ${type}`);
+  // 補打下班卡：超出標準下班 → 自動建加班待簽核（不設寬限）
+  if(type==='下班'){
+    const refOut=(emp.shift==='parttime'||isManager(emp))?t2m(emp.ptOut||'16:30'):WORK_OUT;
+    const tMin=t2m(time);
+    const inRec=records.find(r=>r.empId===eId&&r.date===date&&r.type==='上班');
+    if(tMin>refOut&&!otReqs.find(o=>o.empId===eId&&o.date===date)){
+      otReqs.unshift({id:Date.now()+2,empId:eId,empName:emp.name,pos:emp.pos,date,inTime:inRec?inRec.time.slice(0,5):'--:--',outTime:time,status:'pending',recId:rec.id});
+      auditLog.unshift({id:Date.now()+3,ts:now,action:'補打卡加班申請',empName:emp.name,empId:eId,detail:`${date} 下班 ${time}，超出標準，自動建立待簽核`});
+    }
+  }
+  sv();renderMg();renderOT();renderAudit();alert(`✓ 補打卡成功：${emp.name} ${date} ${time} ${type}`);
 }
 
 function getAnomalies(ef,df){
@@ -1720,12 +1730,29 @@ function renderOT(){
     </tr>`).join('')}</tbody></table>`;
   }else{h+='<div style="color:var(--text3);font-size:13px;padding:4px 0;">目前無待簽核</div>';}
   if(done.length){
-    h+=`<div style="font-size:11px;color:var(--text3);margin:16px 0 8px;letter-spacing:.06em;text-transform:uppercase;">已處理</div>
-    <table class="log-table"><thead><tr><th>員工</th><th>日期</th><th>下班時間</th><th>狀態</th></tr></thead>
-    <tbody>${done.map(o=>`<tr>
-      <td class="emp-name">${o.empName}</td><td class="mono">${o.date}</td><td class="mono">${o.outTime}</td>
-      <td><span class="badge ${o.status==='approved'?'b-app':'b-rej'}">${o.status==='approved'?'已核准':'已拒絕'}</span></td>
-    </tr>`).join('')}</tbody></table>`;
+    h+=`<div style="font-size:11px;color:var(--text3);margin:16px 0 8px;letter-spacing:.06em;">已處理</div>`;
+    // 按月份分組，最新月份在上
+    const byMonth={};
+    done.forEach(o=>{const ym=o.date.slice(0,7);if(!byMonth[ym])byMonth[ym]=[];byMonth[ym].push(o);});
+    const months=Object.keys(byMonth).sort((a,b)=>b.localeCompare(a));
+    months.forEach(ym=>{
+      const [y,m]=ym.split('-');
+      const label=`${y} 年 ${parseInt(m)} 月`;
+      const uid=`otDone_${ym.replace('-','_')}`;
+      h+=`<div style="margin-bottom:8px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+        <div style="background:var(--bg3);padding:8px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;color:var(--text2);"
+          onclick="const b=document.getElementById('${uid}');b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.arrow').textContent=b.style.display==='none'?'▶':'▼';">
+          <span>${label}（${byMonth[ym].length} 筆）</span><span class="arrow">▶</span>
+        </div>
+        <div id="${uid}" style="display:none;">
+          <table class="log-table"><thead><tr><th>員工</th><th>日期</th><th>下班時間</th><th>狀態</th></tr></thead>
+          <tbody>${byMonth[ym].sort((a,b)=>b.date.localeCompare(a.date)).map(o=>`<tr>
+            <td class="emp-name">${o.empName}</td><td class="mono">${o.date}</td><td class="mono">${o.outTime}</td>
+            <td><span class="badge ${o.status==='approved'?'b-app':'b-rej'}">${o.status==='approved'?'已核准':'已拒絕'}</span></td>
+          </tr>`).join('')}</tbody></table>
+        </div>
+      </div>`;
+    });
   }
   document.getElementById('otPend').innerHTML=h;
 }
