@@ -300,6 +300,15 @@ nav { flex: 1; padding: 16px 12px; overflow-y: auto; }
 .btn-punch-in:active, .btn-punch-out:active { transform: scale(.97); }
 .btn-punch-in:disabled, .btn-punch-out:disabled { opacity: .25; cursor: not-allowed; transform: none; }
 
+/* Leave warning */
+.leave-warn { display: none; color: #e8505b; background: rgba(232,80,91,.12); border: 1px solid rgba(232,80,91,.4); border-radius: 8px; padding: 10px 14px; text-align: center; font-weight: 700; font-size: 14px; margin-bottom: 10px; letter-spacing: .04em; }
+
+/* Today attendance panel */
+.today-attend-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.today-attend-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; min-width: 80px; }
+.today-attend-card .ta-name { font-weight: 700; font-size: 15px; margin-bottom: 5px; }
+.today-attend-card .ta-status { display: flex; gap: 8px; font-size: 11px; }
+
 /* Feedback toast */
 .toast {
   display: none;
@@ -484,15 +493,16 @@ select.inp option { background: var(--bg2); }
 .lv-swatch { width: 10px; height: 10px; border-radius: 3px; }
 
 /* ── Staff Grid ── */
-.staff-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; cursor: grab; }
+.staff-wrap { display: flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.staff-names-col { flex-shrink: 0; width: 82px; background: var(--bg2); border-right: 1px solid var(--border); z-index: 2; }
+.staff-names-col .sgc { border-bottom: 1px solid var(--border); width: 82px; box-sizing: border-box; }
+.staff-names-col .sgc:last-child { border-bottom: none; }
+.staff-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; cursor: grab; flex: 1; }
 .staff-scroll:active { cursor: grabbing; }
 .staff-grid {
   display: grid;
   gap: 1px;
   background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
   width: max-content;
 }
 .sgc {
@@ -500,7 +510,7 @@ select.inp option { background: var(--bg2); }
   padding: 4px 3px;
   font-size: 10px;
   text-align: center;
-  min-height: 26px;
+  min-height: 27px;
   display: flex; align-items: center; justify-content: center;
 }
 .sgc.nm { font-weight: 600; font-size: 11px; padding-left: 10px; justify-content: flex-start; white-space: nowrap; color: var(--text); }
@@ -678,10 +688,15 @@ select.inp option { background: var(--bg2); }
           <button class="key del" onclick="nkDel()">⌫</button>
         </div>
         <div id="toast" class="toast"></div>
+        <div id="leaveWarn" class="leave-warn"></div>
         <div class="punch-btns">
           <button class="btn-punch-in" id="bIn" onclick="punch('上班')" disabled>上班打卡</button>
           <button class="btn-punch-out" id="bOut" onclick="punch('下班')" disabled>下班打卡</button>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-title">今日當班人員</div>
+        <div id="todayAttend"></div>
       </div>
       <div class="card">
         <div class="card-title">今日打卡記錄（最近 15 筆）</div>
@@ -747,7 +762,10 @@ select.inp option { background: var(--bg2); }
             <button class="cal-nav-btn" onclick="scmNext()" style="width:28px;height:28px;font-size:16px;">›</button>
           </div>
         </div>
-        <div class="staff-scroll"><div id="staffCalGrid"></div></div>
+        <div class="staff-wrap">
+          <div class="staff-names-col" id="staffNamesCol"></div>
+          <div class="staff-scroll"><div id="staffCalGrid"></div></div>
+        </div>
       </div>
 
       <div class="card">
@@ -967,6 +985,7 @@ let emps,records,leaves,otReqs,auditLog=[],adminPwd='1234',adminIn=false;
 let digitBuf='',curEmpId=null,clrTimer=null;
 let calY=new Date().getFullYear(),calM=new Date().getMonth(),selDates=new Set();
 let dragIdx=null;
+let _pendingAnomaly=null;
 
 function svLocal(){try{localStorage.setItem('ats_r',JSON.stringify(records));localStorage.setItem('ats_e',JSON.stringify(emps));localStorage.setItem('ats_l',JSON.stringify(leaves));localStorage.setItem('ats_o',JSON.stringify(otReqs));localStorage.setItem('ats_p',adminPwd);localStorage.setItem('ats_a',JSON.stringify(auditLog));}catch(e){}}
 function sv(){svLocal();schedulePush();}
@@ -1035,12 +1054,25 @@ function sw(t){
   if(t==='report'){popMonths();popSels();renderRpt();}
   if(t==='leave'){popSels();renderCal();renderStaffCal();}
   if(t==='employees'){renderEmpList();popNePos();}
-  if(t==='admin'&&adminIn){popSels();renderMg();renderOT();renderAudit();}
+  if(t==='admin'&&adminIn){popSels();renderMg();renderOT();renderAudit();applyPendingAnomaly();}
 }
 
 function goAdmin(){
   if(adminIn){sw('admin');}
   else{document.getElementById('mainApp').style.display='none';document.getElementById('adminLoginScreen').style.display='flex';}
+}
+function goToAnomaly(empId,date){
+  _pendingAnomaly={empId,date};
+  goAdmin();
+}
+function applyPendingAnomaly(){
+  if(!_pendingAnomaly)return;
+  const{empId,date}=_pendingAnomaly;
+  _pendingAnomaly=null;
+  document.getElementById('mgEmp').value=empId;
+  document.getElementById('mgDate').value=date;
+  renderMg();
+  setTimeout(()=>document.getElementById('mgBody').scrollIntoView({behavior:'smooth',block:'start'}),100);
 }
 function showMain(){document.getElementById('adminLoginScreen').style.display='none';document.getElementById('mainApp').style.display='flex';}
 function chkPwd(){
@@ -1048,7 +1080,7 @@ function chkPwd(){
     adminIn=true;showMain();
     document.getElementById('aPwd').value='';
     document.getElementById('pinErr').style.display='none';
-    sw('admin');popSels();renderMg();renderOT();renderAudit();
+    sw('admin');popSels();renderMg();renderOT();renderAudit();applyPendingAnomaly();
     document.getElementById('supDate').value=today();
     document.getElementById('supTime').value='08:00';
   }else{
@@ -1098,8 +1130,13 @@ function lookup(){
 }
 function updBtns(){
   const bI=document.getElementById('bIn'),bO=document.getElementById('bOut');
+  const lw=document.getElementById('leaveWarn');
   bI.disabled=!curEmpId;
-  if(!curEmpId){bO.disabled=true;return;}
+  if(!curEmpId){bO.disabled=true;lw.style.display='none';return;}
+  const emp=emps.find(e=>e.id===curEmpId);
+  const todayLv=leaves.find(l=>l.empId===curEmpId&&String(l.date).slice(0,10)===punchDate()&&['排休','指休'].includes(l.type));
+  if(todayLv&&emp){lw.textContent=`${emp.name} 今日休假！！`;lw.style.display='block';}
+  else{lw.style.display='none';}
   bO.disabled=!records.some(r=>r.empId===curEmpId&&r.date===punchDate()&&r.type==='上班');
 }
 function punch(type){
@@ -1145,6 +1182,38 @@ function showToast(msg,t){
   clearTimeout(toast._t);toast._t=setTimeout(()=>toast.className='toast',4500);
 }
 
+function renderTodayAttend(){
+  const td=punchDate();
+  const ae=activeEmps();
+  const el=document.getElementById('todayAttend');
+  if(!el)return;
+  if(!ae.length){el.innerHTML='<div style="color:var(--text3);font-size:13px;padding:4px 0;">尚無員工資料</div>';return;}
+  const OUTER=['外場主管','外場副主管','外場領班','資深服務員','服務員'];
+  const INNER=['內場主管','內場副主管','資深廚師','廚師','廚助'];
+  function cardHtml(emp){
+    const lv=leaves.find(l=>l.empId===emp.id&&String(l.date).slice(0,10)===td);
+    const dr=records.filter(r=>r.empId===emp.id&&r.date===td);
+    const pI=dr.some(r=>r.type==='上班'),pO=dr.some(r=>r.type==='下班');
+    const nameColor=lv?'var(--text3)':(pI?'var(--text)':'var(--text2)');
+    const statusHtml=lv
+      ?`<span style="color:var(--blue);font-size:10px;">${lv.type}</span>`
+      :`<span style="color:${pI?'var(--green)':'var(--text3)'};">${pI?'✓':'○'} 上班</span><span style="color:${pO?'var(--green)':'var(--text3)'};">${pO?'✓':'○'} 下班</span>`;
+    return `<div class="today-attend-card"><div class="ta-name" style="color:${nameColor};">${emp.name}</div><div class="ta-status">${statusHtml}</div></div>`;
+  }
+  const outer=ae.filter(e=>OUTER.includes(e.pos));
+  const inner=ae.filter(e=>INNER.includes(e.pos));
+  const other=ae.filter(e=>!OUTER.includes(e.pos)&&!INNER.includes(e.pos));
+  let h='';
+  if(outer.length)h+=`<div class="today-attend-grid">${outer.map(cardHtml).join('')}</div>`;
+  if(outer.length&&inner.length)h+=`<div style="border-top:1px solid var(--border);margin:10px 0;"></div>`;
+  if(inner.length)h+=`<div class="today-attend-grid">${inner.map(cardHtml).join('')}</div>`;
+  if(other.length){
+    if(outer.length||inner.length)h+=`<div style="border-top:1px solid var(--border);margin:10px 0;"></div>`;
+    h+=`<div class="today-attend-grid">${other.map(cardHtml).join('')}</div>`;
+  }
+  el.innerHTML=h;
+}
+
 function renderTL(){
   const rs=records.filter(r=>r.date===punchDate()).slice(0,15);
   document.getElementById('todayLog').innerHTML=rs.length?rs.map(r=>`<tr>
@@ -1153,6 +1222,7 @@ function renderTL(){
     <td class="mono">${r.time}</td>
     <td><span class="badge ${r.type==='上班'?'b-in':'b-out'}">${r.type}</span></td>
   </tr>`).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px;">今日尚無打卡記錄</td></tr>';
+  renderTodayAttend();
 }
 
 // ═══════════════════════════════════════════
@@ -1184,12 +1254,7 @@ function analyseDay(emp,date){
   if(!ir)return{cls:'late',rem:'缺上班卡',h:'',inT:'',outT:or.time,man:or.manual,ot:false,isLv:false};
   if(!or)return{cls:'late',rem:'缺下班卡',h:'',inT:ir.time,outT:'',man:ir.manual,ot:false,isLv:false};
   const inM=t2m(ir.time.slice(0,5)),outM=t2m(or.time.slice(0,5));
-  // 補打卡：管理員補登，直接以實際時間計算，不套加班上限
-  if(ir.manual&&or.manual){
-    const deduct=(inM<=15*60+30&&outM>=16*60)?0.5:0;
-    const h=Math.max(0,Math.floor(((outM-inM)/60-deduct)*2)/2);
-    return{cls:'ok',rem:'',h,inT:ir.time,outT:or.time,man:true,ot:false,isLv:false};
-  }
+  // 補打卡：走正常簽核流程（加班需核簽、早退需核簽），與一般打卡相同
   const otR=otReqs.find(o=>o.empId===emp.id&&o.date===date&&o.status==='approved');
   const otP=otReqs.find(o=>o.empId===emp.id&&o.date===date&&o.status==='pending');
   let effOut=outM,rem='',cls='ok',ot=false;
@@ -1212,7 +1277,7 @@ function analyseDay(emp,date){
   if(!ot&&emp.shift==='parttime'&&outM<refOut-30){rem=(rem?rem+' ':'')+'早退';cls='late';}
   const effOutStr=`${pad(Math.floor(effOut/60))}:${pad(effOut%60)}:00`;
   const h=calcH(ir.time,ot?or.time:effOutStr,emp);
-  if(inM>refIn+1){rem=(rem?rem+' ':'')+'遲到';cls='late';}
+  if(inM>=refIn+1){rem=(rem?rem+' ':'')+'遲到';cls='late';}
   if(!rem)cls=ot?'ot':'ok';
   return{cls,rem,h,inT:ir.time,outT:or.time,man:ir.manual||or.manual,ot,isLv:false};
 }
@@ -1274,24 +1339,46 @@ function exportRpt(fmt){
   const[y,m]=month.split('-');const dim=new Date(+y,+m,0).getDate();
   const days=[];for(let d=1;d<=dim;d++)days.push(`${y}-${m}-${pad(d)}`);
   const es=ef?emps.filter(e=>e.id===ef):activeEmps();
+  const empLabel=ef?(emps.find(e=>e.id===ef)?.name||ef):'全員';
   const header=['姓名','員工編號','職位','日期','上班打卡','下班打卡','工時(h)','備註'];
   const dataRows=[];
-  es.forEach(emp=>{days.forEach(date=>{
-    if(date>today())return;
-    const a=analyseDay(emp,date);
-    dataRows.push([emp.name,emp.id,emp.pos,date,a.inT||'',a.outT||'',a.h!==''?a.h:'',a.rem||'正常']);
-  });});
+  let tw=0,tl=0,tlt=0,th=0,tot=0;
+  es.forEach(emp=>{
+    const schLeaves=leaves.filter(l=>l.empId===emp.id&&l.date.startsWith(`${y}-${m}`)&&LEAVE_SCHEDULED.includes(l.type)).length;
+    tl+=schLeaves;
+    days.forEach(date=>{
+      if(date>today())return;
+      const lvType=getLvT(emp.id,date);
+      if(LEAVE_SCHEDULED.includes(lvType))return;
+      const a=analyseDay(emp,date);
+      if(a.isLv){if(LEAVE_COUNT_ACTUAL.includes(lvType))tl++;}
+      else{
+        if(a.cls==='ok'||a.cls==='ot')tw++;
+        if(a.cls==='late')tlt++;
+        if(typeof a.h==='number'){th+=a.h;if(emp.shift==='fixed')tot+=a.h-8.5;}
+      }
+      dataRows.push([emp.name,emp.id,emp.pos,date,a.inT||'',a.outT||'',a.h!==''?a.h:'',a.rem||'正常']);
+    });
+  });
+  const tv=dim*es.length-tw;
+  const totR=Math.round(tot*2)/2;
+  const totStr=(totR>=0?'+':'')+totR+'h';
+  const summaryRows=[
+    ['','','','','','','',''],
+    ['── 統計摘要 ──','','','','','','',''],
+    ['上班天數',tw,'排假天數',tl,'休假天數',tv,'',''],
+    ['遲到漏打',tlt,'總工時',th+'h','加班/補休工時',totStr,'',''],
+  ];
   if(fmt==='xlsx'){
     const wb=XLSX.utils.book_new();
-    const ws=XLSX.utils.aoa_to_sheet([header,...dataRows]);
-    // 欄位寬度
+    const ws=XLSX.utils.aoa_to_sheet([header,...dataRows,...summaryRows]);
     ws['!cols']=[{wch:10},{wch:8},{wch:10},{wch:12},{wch:10},{wch:10},{wch:8},{wch:12}];
     XLSX.utils.book_append_sheet(wb,ws,'出勤月報表');
-    XLSX.writeFile(wb,`出勤月報表_${month}.xlsx`);
+    XLSX.writeFile(wb,`出勤月報表_${month}_${empLabel}.xlsx`);
   }else{
     let csv=header.join(',')+'\n';
-    dataRows.forEach(r=>csv+=r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')+'\n');
-    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download=`出勤月報表_${month}.csv`;a.click();
+    [...dataRows,...summaryRows].forEach(r=>csv+=r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')+'\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);a.download=`出勤月報表_${month}_${empLabel}.csv`;a.click();
   }
 }
 
@@ -1339,8 +1426,9 @@ function renderCal(){
   const eId=document.getElementById('lvEmp').value;
   const first=new Date(calY,calM,1).getDay(),dim=new Date(calY,calM+1,0).getDate(),t=today();
   let h='';
-  ['日','一','二','三','四','五','六'].forEach(d=>h+=`<div class="cal-dow">${d}</div>`);
-  for(let i=0;i<first;i++)h+='<div class="cal-day empty"></div>';
+  ['一','二','三','四','五','六','日'].forEach(d=>h+=`<div class="cal-dow">${d}</div>`);
+  const offset=(first===0?6:first-1);
+  for(let i=0;i<offset;i++)h+='<div class="cal-day empty"></div>';
   for(let d=1;d<=dim;d++){
     const ds=`${ym}-${pad(d)}`;
     // 用 slice(0,10) 比對，相容 Sheets 回傳的 ISO 格式
@@ -1382,14 +1470,17 @@ function renderStaffCal(){
   if(lbl)lbl.textContent=`${scmY} 年 ${scmM} 月`;
   const dim=new Date(+y,+m,0).getDate();
   const ae=activeEmps();
-  let h=`<div class="staff-grid" style="grid-template-columns:80px repeat(${dim},28px);">`;
-  h+=`<div class="sgc hd nm">員工</div>`;
+  // 人名欄（固定不動）
+  let names=`<div class="sgc hd nm">員工</div>`;
+  ae.forEach(emp=>{names+=`<div class="sgc nm">${emp.name}</div>`;});
+  document.getElementById('staffNamesCol').innerHTML=names;
+  // 日期格（可橫向捲動）
+  let h=`<div class="staff-grid" style="grid-template-columns:repeat(${dim},28px);">`;
   for(let d=1;d<=dim;d++){
     const ds=`${y}-${m}-${pad(d)}`,dow=new Date(ds).getDay();
-    h+=`<div class="sgc hd${dow===0||dow===6?' wk':''}">${d}<br><span style="font-size:8px;">${'日一二三四五六'[dow]}</span></div>`;
+    h+=`<div class="sgc hd${dow===0||dow===6?' wk':''}">${d}<br><span style="font-size:8px;">${'一二三四五六日'[dow===0?6:dow-1]}</span></div>`;
   }
   ae.forEach(emp=>{
-    h+=`<div class="sgc nm">${emp.name}</div>`;
     for(let d=1;d<=dim;d++){
       const ds=`${y}-${m}-${pad(d)}`,dow=new Date(ds).getDay();
       const lv=leaves.find(l=>l.empId===emp.id&&String(l.date).slice(0,10)===ds);
@@ -1399,7 +1490,7 @@ function renderStaffCal(){
         const dr=records.filter(r=>r.empId===emp.id&&String(r.date).slice(0,10)===ds);
         const pI=dr.some(r=>r.type==='上班'),pO=dr.some(r=>r.type==='下班');
         if(pI&&pO)h+=`<div class="sgc" style="background:rgba(34,201,134,.12);color:var(--green);font-size:10px;">✓</div>`;
-        else if(pI||pO)h+=`<div class="sgc" style="background:rgba(245,200,66,.1);color:var(--yellow);font-size:10px;">△</div>`;
+        else if(pI||pO)h+=`<div class="sgc" style="background:rgba(245,200,66,.1);color:var(--yellow);font-size:10px;cursor:pointer;" title="點擊查看異常" onclick="goToAnomaly('${emp.id}','${ds}')">△</div>`;
         else if(dow===0||dow===6)h+=`<div class="sgc wk"></div>`;
         else h+=`<div class="sgc" style="color:var(--text3);font-size:10px;">—</div>`;
       }
@@ -1544,7 +1635,7 @@ function getAnomalies(ef,df){
     if(!ir&&or)res.push({...or,anomaly:'缺上班卡'});
     if(ir&&!or)res.push({...ir,anomaly:'缺下班卡'});
     if(ir&&or){
-      if(t2m(ir.time.slice(0,5))>refIn+1)res.push({...ir,anomaly:'遲到'});
+      if(t2m(ir.time.slice(0,5))>=refIn+1)res.push({...ir,anomaly:'遲到'});
       const outM=t2m(or.time.slice(0,5));
       const otA=otReqs.find(o=>o.empId===g.empId&&o.date===g.date&&o.status==='approved');
       if(!otA&&outM<refOut-30)res.push({...or,anomaly:'早退'});
@@ -1911,7 +2002,7 @@ document.addEventListener('gesturechange',function(e){e.preventDefault();},{pass
 })();
 
 // ── 初始化畫面 ──
-popMonths();renderTL();renderEmpList();renderStaffCal();
+popMonths();renderTL();renderTodayAttend();renderEmpList();renderStaffCal();
 document.getElementById('recFrom').value=today().slice(0,7)+'-01';
 document.getElementById('recTo').value=today();
 
