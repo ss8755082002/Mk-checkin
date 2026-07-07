@@ -1301,7 +1301,7 @@ function renderRpt(){
       const a=analyseDay(emp,date);
       if(a.isLv){if(LEAVE_COUNT_ACTUAL.includes(lvType))tl++;}
       else{
-        if(a.cls==='ok'||a.cls==='ot')tw++;
+        if(a.cls==='ok'||a.cls==='ot'||a.cls==='late')tw++;
         if(a.cls==='late')tlt++;
         if(typeof a.h==='number'){
           th+=a.h;
@@ -1353,7 +1353,7 @@ function exportRpt(fmt){
       const a=analyseDay(emp,date);
       if(a.isLv){if(LEAVE_COUNT_ACTUAL.includes(lvType))tl++;}
       else{
-        if(a.cls==='ok'||a.cls==='ot')tw++;
+        if(a.cls==='ok'||a.cls==='ot'||a.cls==='late')tw++;
         if(a.cls==='late')tlt++;
         if(typeof a.h==='number'){th+=a.h;if(emp.shift==='fixed')tot+=a.h-8.5;}
       }
@@ -1471,7 +1471,7 @@ function renderStaffCal(){
   const dim=new Date(+y,+m,0).getDate();
   const ae=activeEmps();
   // 人名欄（固定不動）
-  let names=`<div class="sgc hd nm">員工</div>`;
+  let names=`<div class="sgc hd nm">員工<br><span style="font-size:8px;visibility:hidden;">x</span></div>`;
   ae.forEach(emp=>{names+=`<div class="sgc nm">${emp.name}</div>`;});
   document.getElementById('staffNamesCol').innerHTML=names;
   // 日期格（可橫向捲動）
